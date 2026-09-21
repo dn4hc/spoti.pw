@@ -4,7 +4,8 @@
 // later one that times every word.
 //
 // SGTTML.m reads the TTML that Apple Music's own lyrics are written in, which is what BiniLyrics and
-// Unison serve; it is the only shape carrying a second voice and the (oh, aye) sung under a line.
+// Unison serve. It and Spicy Lyrics are the only shapes carrying a second voice and the (oh, aye)
+// sung under a line; every other source times lines, or the words inside them, and nothing more.
 #import <UIKit/UIKit.h>
 #import "Shared/Lyrics/Lyrics.h"
 
@@ -15,6 +16,9 @@
 #define SGKeyLyricsAllTracks @"spotifyglass.lyricsAllTracks"
 // Names the source the shown lines came from, on the full screen page.
 #define SGKeyLyricsCredit @"spotifyglass.lyricsCredit"
+// The language a line's translation is asked for in, as an index into SGLyricsTranslationLanguages;
+// unset or 0 takes whatever translation the source has.
+#define SGKeyLyricsTranslationLanguage @"spotifyglass.lyricsTranslationLanguage"
 
 // What a source answers with, and what the chain merges several of into one.
 @interface SGLyricsResult : NSObject
@@ -53,7 +57,7 @@ typedef void (^SGLyricsAsk)(SGLyricsQuery *query, void (^done)(SGLyricsResult *r
 @property (nonatomic, copy) NSString *name;     // "BiniLyrics", what the credit reads
 @property (nonatomic, copy) NSString *detail;   // one line under the name on the Lyrics page
 // Searches by title and artist, so it has nothing to ask with until someone has named the track.
-// Only Musixmatch matches by Spotify's id and can go without.
+// Musixmatch and Spicy Lyrics match by Spotify's id and can go without.
 @property (nonatomic) BOOL needsName;
 @property (nonatomic, copy) SGLyricsAsk ask;
 @end
@@ -95,10 +99,25 @@ void SGLyricsMigrateLegacyKeys(void);
 NSURL *SGLyricsURL(NSString *base, NSDictionary<NSString *, NSString *> *query);
 void SGLyricsGetJSON(NSURL *url, NSDictionary<NSString *, NSString *> *headers, void (^done)(id root));
 void SGLyricsGetText(NSURL *url, void (^done)(NSString *text));
+// For the one source that is asked a question rather than sent to an address. body is anything
+// NSJSONSerialization writes; nothing is sent at all when it is not.
+void SGLyricsPostJSON(NSURL *url, NSDictionary<NSString *, NSString *> *headers, id body, void (^done)(id root));
+// Every source's reply goes through this, so a walk that lost a request to the network or a busy
+// server is not kept as "no lyrics". The two above call it themselves.
+void SGLyricsNoteReply(NSURLResponse *response, NSError *error);
 
-// SGTTML.m. Apple Music's TTML as timed lines, the voices already turned into alignments; nil when
-// the document holds no line the page could show.
+// SGTTML.m. Apple Music's TTML as timed lines, the voices already turned into alignments and each
+// line's translation and pronunciation added where the head has them; nil when the document holds no
+// line the page could show.
 NSArray<SGKaraokeLine *> *SGTTMLLines(NSString *xml);
+
+// The languages a translation can be asked for in, as language tags ("en", "es"), the first one ""
+// for whatever the source has; SGKeyLyricsTranslationLanguage indexes it, so it only ever grows at
+// the end. Their names, in English, for the Lyrics page.
+NSArray<NSString *> *SGLyricsTranslationLanguages(void);
+NSArray<NSString *> *SGLyricsTranslationLanguageNames(void);
+// The tag of the language asked for, nil for whatever the source has.
+NSString *SGLyricsTranslationLanguage(void);
 
 
 // The sources themselves, each in its own file.
@@ -107,5 +126,6 @@ extern SGLyricsAsk SGMusixmatchAsk;
 extern SGLyricsAsk SGUnisonAsk;
 extern SGLyricsAsk SGNetEaseAsk;
 extern SGLyricsAsk SGLrcLibAsk;
+extern SGLyricsAsk SGSpicyLyricsAsk;
 
 UIViewController *SGLyricsSourcesPage(void);   // the ordered list on the Lyrics page

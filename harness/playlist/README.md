@@ -25,6 +25,20 @@ scroll does, with nothing laid out, and reports what the redesign's scroll pass 
 
 What it does not cover: the real element framework's autolayout, and the flags `PlaylistField.x` forces.
 
+`other` on the launch line makes it someone else's playlist (save on Play's right instead of download, and a
+description with an HTML entity); the header controller's view model is mocked from the device's values (2026-09-18).
+
+`other late` opens it with no save in the row, the way a first open has it, and adds save at 2.5 s as an arranged
+subview of HeaderActionsRow, which lays out nothing above the row. At 3 s the log says what the row shows on Play's
+right: "Like" once `PlaylistHeader.x` watches the row, "Download" before it did (issue #19). The scripted states
+from 4 s on lay the header out and would hide the difference, so read it before then.
+
+`mix` on the launch line builds a playlist Spotify makes (Indie Rock Mix), from `trees/continuous/4.txt`
+(2026-09-20): no cover square anywhere, and in its place a `HeaderFullbleedCentralView` holding the picture,
+the fade under it and Spotify's own 45pt title. Before any other pass it runs the one the page opens with,
+where the block has no width yet and that view is the only child of the layout wide enough to be taken for
+it — which is what used to conceal the picture for good and leave the hero black.
+
 `liked` on the launch line (`xcrun simctl launch booted com.vojta.playlistharness liked`) builds Liked Songs
 instead, from `trees/continuous/1.txt` (2026-09-18): no cover, a 238pt header, the count in a stack of its own,
 the play button 80x48, and `LiquidGlass.gradientContainer`, which it fades in at 3 s as a scroll does.

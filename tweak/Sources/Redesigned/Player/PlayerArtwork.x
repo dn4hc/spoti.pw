@@ -25,7 +25,7 @@ static NSHashTable<UIView *> *sg_tilts;
 static NSMapTable<UIView *, UIView *> *sg_covers;
 
 static CGFloat currentScale(void) {
-    SPTPlayerState *state = SGRPlayerState();
+    SPTPlayerState *state = SGPlayerState();
     if (!state.isPaused || SGRPlayerIsTransitioning()) return 1;
     return SGRReduceMotion() ? kPausedScaleReduceMotion : kPausedScale;
 }
@@ -101,6 +101,24 @@ CGRect SGRPlayerArtworkAreaIn(UIView *host) {
     return CGRectNull;
 }
 
+// The cover hidden for a stand-in, so the same one comes back if the list moved on meanwhile.
+static __weak UIView *sg_hiddenCover, *sg_hiddenPlate;
+
+void SGRPlayerSetCoverHidden(BOOL hidden) {
+    sg_hiddenCover.alpha = 1;
+    sg_hiddenPlate.alpha = 1;
+    sg_hiddenCover = sg_hiddenPlate = nil;
+    if (!hidden) return;
+    UIView *tilt = showingTilt();
+    UIView *cover = coverIn(tilt);
+    if (!cover) return;
+    UIView *plate = SGRShadowPlateIn(tilt, &kPlateKey);
+    cover.alpha = 0;
+    plate.alpha = 0;
+    sg_hiddenCover = cover;
+    sg_hiddenPlate = plate;
+}
+
 #pragma mark - the paused shrink
 
 static void scaleEveryCover(BOOL animated) {
@@ -153,7 +171,7 @@ static void scaleEveryCover(BOOL animated) {
 }
 %end
 
-@interface SGRPlayerArtworkWatcher : NSObject <SGRPlayerStateObserver>
+@interface SGRPlayerArtworkWatcher : NSObject <SGPlayerStateObserver>
 @end
 
 @implementation SGRPlayerArtworkWatcher {
@@ -185,7 +203,7 @@ static SGRPlayerArtworkWatcher *sg_artworkWatcher;
     sg_tilts = [NSHashTable weakObjectsHashTable];
     sg_covers = [NSMapTable weakToWeakObjectsMapTable];
     sg_artworkWatcher = [SGRPlayerArtworkWatcher new];
-    SGRAddPlayerStateObserver(sg_artworkWatcher);
+    SGAddPlayerStateObserver(sg_artworkWatcher);
     SGRObservePlayerTransition(sg_artworkWatcher, ^(id owner) {
         scaleEveryCover(YES);
     }, ^(id owner) {

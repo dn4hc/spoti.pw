@@ -17,23 +17,10 @@ static const CGFloat kGlyphSide = 44, kCapsuleLead = 4, kCapsuleTrail = 20;
 // The mirrored glyph, the size Spotify draws one inside a 48pt round button.
 static const CGFloat kMirrorGlyph = 24;
 
-static char kCapsuleGlassKey, kMirrorGlassKey, kGlyphWatchedKey;
+static char kCapsuleGlassKey, kMirrorGlassKey, kWordGlassKey;
 
-#pragma mark - firing Spotify's button
-
-// The way a tap on Spotify's own button would: its first control, fired through its actions, and through
-// accessibility for an Encore control that reads its touches from a gesture recognizer instead.
-static void fire(UIView *source) {
-    __block UIControl *control = nil;
-    SGForEachView(source, ^(UIView *v) {
-        if (!control && [v isKindOfClass:UIControl.class]) control = (UIControl *)v;
-    });
-    if (control && SGRFire(control)) return;
-    id target = control ?: source;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ SGLog(@"redesign kit: an action row control fired through accessibility on %@", [target class]); });
-    [target accessibilityActivate];
-}
+// A word button's padding either side of the word.
+static const CGFloat kWordPadding = 18;
 
 // The glyph Spotify's button draws: an image view of the button's own size that nothing hidden is in the
 // way of. `side` is the size to match, 0 for any image view that is showing.
@@ -63,6 +50,7 @@ static NSString *wordIn(UIView *button) {
 @implementation SGRPlayCapsule {
     UIImageView *_glyph;
     UILabel *_title;
+    __weak UIImageView *_watchedGlyph;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -92,8 +80,21 @@ static NSString *wordIn(UIView *button) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGRect bounds = self.bounds;
-    SGRGlassCapsuleInside(self, &kCapsuleGlassKey, bounds.size, YES);
-    _glyph.frame = CGRectMake(kCapsuleLead, round((bounds.size.height - kGlyphSide) / 2), kGlyphSide, kGlyphSide);
+    if (self.fillColor) {
+        if (![self.backgroundColor isEqual:self.fillColor]) self.backgroundColor = self.fillColor;
+        self.layer.cornerRadius = bounds.size.height / 2;
+        self.layer.cornerCurve = kCACornerCurveContinuous;
+    } else {
+        SGRGlassCapsuleInside(self, &kCapsuleGlassKey, bounds.size, YES);
+    }
+    // Given more room than the word asks for, the glyph and the word stay together in the middle.
+    CGFloat lead = kCapsuleLead + MAX(0, round((bounds.size.width - [self sgr_width]) / 2));
+    _glyph.frame = CGRectMake(lead, round((bounds.size.height - kGlyphSide) / 2), kGlyphSide, kGlyphSide);
+    // Spotify's glyph comes on a 48pt canvas and is scaled down into the frame; one drawn tight is shown at
+    // its own size instead of blown up to fill it.
+    CGSize image = _glyph.image.size;
+    UIViewContentMode mode = image.width <= kGlyphSide && image.height <= kGlyphSide ? UIViewContentModeCenter : UIViewContentModeScaleAspectFit;
+    if (_glyph.contentMode != mode) _glyph.contentMode = mode;
     [_title sizeToFit];
     CGSize text = _title.bounds.size;
     _title.frame = CGRectMake(CGRectGetMaxX(_glyph.frame), round((bounds.size.height - text.height) / 2),
@@ -112,13 +113,14 @@ static NSString *wordIn(UIView *button) {
 
     UIFont *font = SGRFont(UIFontTextStyleSubheadline, UIFontWeightSemibold, UIContentSizeCategoryLarge);
     if (![_title.font isEqual:font]) _title.font = font;
-    if (![_title.textColor isEqual:SGRAccent()]) _title.textColor = SGRAccent();
+    UIColor *content = self.contentColor ?: SGRAccent();
+    if (![_title.textColor isEqual:content]) _title.textColor = content;
     if (word && ![_title.text isEqualToString:word]) {
         _title.text = word;
         self.accessibilityLabel = word;
         [self setNeedsLayout];
     }
-    if (![_glyph.tintColor isEqual:SGRAccent()]) _glyph.tintColor = SGRAccent();
+    if (![_glyph.tintColor isEqual:content]) _glyph.tintColor = content;
 
     if (glyph.image && _glyph.image != glyph.image) {
         _glyph.image = [glyph.image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
@@ -128,9 +130,10 @@ static NSString *wordIn(UIView *button) {
                   NSStringFromClass(glyph.class), word);
         });
     }
-    // Play becomes pause without the header laying out again.
-    if (glyph && !objc_getAssociatedObject(glyph, &kGlyphWatchedKey)) {
-        objc_setAssociatedObject(glyph, &kGlyphWatchedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // Play becomes pause without the header laying out again. Watched per glyph view rather than once for
+    // good, so a glyph Spotify hands to another button reports to the button it is in now.
+    if (glyph && glyph != _watchedGlyph) {
+        _watchedGlyph = glyph;
         __weak SGRPlayCapsule *weakSelf = self;
         __weak UIView *weakSource = source;
         SGRObserveImage(glyph, ^(UIImageView *view) {
@@ -148,15 +151,41 @@ static NSString *wordIn(UIView *button) {
 }
 
 - (void)sgr_tap {
-    fire(self.source);
+    SGRActivate(self.source);
 }
 
 @end
 
 #pragma mark - a button standing in for Spotify's
 
+// The label a button shows its word in, whether it has a word in it yet or not.
+static UILabel *labelIn(UIView *button) {
+    __block UILabel *found = nil;
+    SGForEachView(button, ^(UIView *v) {
+        if (!found && [v isKindOfClass:UILabel.class]) found = (UILabel *)v;
+    });
+    return found;
+}
+
+// The text a button shows: the first label under it with something in it.
+static NSString *labelTextIn(UIView *button) {
+    __block NSString *text = nil;
+    SGForEachView(button, ^(UIView *v) {
+        if (text || ![v isKindOfClass:UILabel.class]) return;
+        NSString *candidate = [((UILabel *)v).text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (candidate.length) text = candidate;
+    });
+    return text;
+}
+
 @implementation SGRMirrorButton {
     UIImageView *_glyph;
+    UILabel *_word;
+    __weak UILabel *_watchedWord;
+    __weak UIImageView *_watchedGlyph;
+    // Spotify's own image, as it was taken: what the copy is compared against, since a copy re-rendered as
+    // a template is no longer the same object.
+    UIImage *_takenGlyph;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -174,10 +203,31 @@ static NSString *wordIn(UIView *button) {
     return self;
 }
 
+- (CGFloat)sgr_width {
+    if (!self.showsWord || !_word.text.length) return SGRActionHeight;
+    [_word sizeToFit];
+    return MAX(SGRActionHeight, ceil(_word.bounds.size.width) + 2 * kWordPadding);
+}
+
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGRect bounds = self.bounds;
+    // A word button waiting for its word draws the circle, and takes the capsule once the word is there:
+    // only one of the two shapes is asked for on a pass, so the other is put away rather than left under it.
+    if (self.showsWord && _word.text.length) {
+        SGRGlassCapsuleInside(self, &kWordGlassKey, bounds.size, NO);
+        ((UIView *)objc_getAssociatedObject(self, &kMirrorGlassKey)).hidden = YES;
+        [_word sizeToFit];
+        CGSize text = _word.bounds.size;
+        // Given less width than the word asked for -- what is left of the row beside a wide Play -- the
+        // capsule spends its own padding on the word before it lets the word be cut ("Following").
+        CGFloat padding = MIN(kWordPadding, MAX(0, floor((bounds.size.width - text.width) / 2)));
+        _word.frame = CGRectMake(padding, round((bounds.size.height - text.height) / 2),
+                                 MAX(0, bounds.size.width - 2 * padding), text.height);
+        return;
+    }
     SGRGlassInside(self, &kMirrorGlassKey, SGRGlassCircleSize);
+    ((UIView *)objc_getAssociatedObject(self, &kWordGlassKey)).hidden = YES;
     _glyph.frame = CGRectMake(round((bounds.size.width - kMirrorGlyph) / 2), round((bounds.size.height - kMirrorGlyph) / 2),
                               kMirrorGlyph, kMirrorGlyph);
 }
@@ -188,14 +238,68 @@ static NSString *wordIn(UIView *button) {
     if (!source) return;
     _source = source;
 
+    if (self.showsWord) {
+        if (!_word) {
+            _word = [UILabel new];
+            _word.userInteractionEnabled = NO;
+            _word.textAlignment = NSTextAlignmentCenter;
+            _word.font = SGRFont(UIFontTextStyleSubheadline, UIFontWeightSemibold, UIContentSizeCategoryExtraLarge);
+            _word.textColor = SGRPrimary();
+            [self addSubview:_word];
+        }
+        NSString *text = labelTextIn(source);
+        if (text && ![_word.text isEqualToString:text]) {
+            _word.text = text;
+            self.accessibilityLabel = source.accessibilityLabel ?: text;
+            [self setNeedsLayout];
+            [self.superview setNeedsLayout];
+        }
+        // Spotify's word is its state, which it fills in a moment after the button itself is there and
+        // changes without laying out anything the page hears (the artist's Follow, issue #52). So the label
+        // it puts the word in is watched, and the button hears it land.
+        UILabel *source_word = labelIn(source);
+        if (source_word && source_word != _watchedWord) {
+            _watchedWord = source_word;
+            __weak SGRMirrorButton *weakSelf = self;
+            __weak UIView *weakSource = source;
+            SGRObserveText(source_word, ^(UILabel *label) {
+                if (weakSelf && weakSource) [weakSelf feedFrom:weakSource];
+            });
+        }
+        // Until the word is there the button is the glyph it falls back to, which says what it does, rather
+        // than an empty capsule.
+        BOOL hasWord = _word.text.length > 0;
+        if (_glyph.hidden != hasWord) {
+            _glyph.hidden = hasWord;
+            [self setNeedsLayout];
+        }
+        if (!hasWord && self.fallbackGlyph && _glyph.image != self.fallbackGlyph) {
+            _glyph.image = self.fallbackGlyph;
+            _glyph.tintColor = SGRPrimary();
+        }
+        if (!hasWord && !self.accessibilityLabel) self.accessibilityLabel = source.accessibilityLabel;
+        return;
+    }
+
     UIImageView *glyph = glyphIn(source, 0);
     NSString *word = source.accessibilityLabel ?: wordIn(source);
     if (word && ![self.accessibilityLabel isEqualToString:word]) self.accessibilityLabel = word;
-    if (glyph.image && _glyph.image != glyph.image) _glyph.image = glyph.image;
-    if (glyph.tintColor && ![_glyph.tintColor isEqual:glyph.tintColor]) _glyph.tintColor = glyph.tintColor;
+    if (glyph.image && _takenGlyph != glyph.image) {
+        _takenGlyph = glyph.image;
+        _glyph.image = self.glyphColor ? [glyph.image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]
+                                       : glyph.image;
+    }
+    UIColor *tint = self.glyphColor ?: glyph.tintColor;
+    if (tint && ![_glyph.tintColor isEqual:tint]) _glyph.tintColor = tint;
+    if (!glyph && self.fallbackGlyph && _glyph.image != self.fallbackGlyph) {
+        _takenGlyph = nil;
+        _glyph.image = self.fallbackGlyph;
+        _glyph.tintColor = self.glyphColor ?: SGRPrimary();
+    }
 
-    if (glyph && !objc_getAssociatedObject(glyph, &kGlyphWatchedKey)) {
-        objc_setAssociatedObject(glyph, &kGlyphWatchedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // As the capsule does: watched per glyph view, so a reused one reports where it is now.
+    if (glyph && glyph != _watchedGlyph) {
+        _watchedGlyph = glyph;
         __weak SGRMirrorButton *weakSelf = self;
         __weak UIView *weakSource = source;
         SGRObserveImage(glyph, ^(UIImageView *view) {
@@ -213,7 +317,88 @@ static NSString *wordIn(UIView *button) {
 }
 
 - (void)sgr_tap {
-    fire(self.source);
+    SGRActivate(self.source);
+    // The word is watched where Spotify writes it, but a button that rebuilds its content on the state it
+    // just took writes the new word into a label the watch has never seen. So a tap, and only a tap, asks
+    // the button again a moment later, which also moves the watch onto whatever label it ended up with.
+    if (!self.showsWord) return;
+    __weak SGRMirrorButton *weakSelf = self;
+    for (NSNumber *delay in @[@0.3, @1.0]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            SGRMirrorButton *button = weakSelf;
+            if (button.source) [button feedFrom:button.source];
+        });
+    }
 }
 
 @end
+
+#pragma mark - the page's pinned ⋯
+
+// A mirror of the back button, which UIKit draws as a 44pt glass circle at the top of the safe area, 16pt
+// in from the leading edge (trees/continuous/1.txt:2554: the navigation bar's own glass at {16, 0} 44x44,
+// the bar itself at the safe area's top). ⋯ takes the same size and the same insets on the other side, so
+// the two read as one row on every page (issue #57).
+static const CGFloat kCornerSide = 16;
+
+// The page whose pinned ⋯ was last tapped, and when: what tells the sheet that opens a moment later which
+// page's menu it is. The same trick Shared/Player/SpeedPitchMenu.x plays on the player's more button, but
+// from this side of it, since this button is the redesign's own and knows its own page.
+//
+// Recorded on touch down rather than on touch up: the button's own -sgr_tap is registered first and fires
+// Spotify's ⋯ from the same event, so a sheet Spotify puts up in that same turn would ask which page it
+// belonged to before a target added after -sgr_tap had answered.
+static __weak UIView *sg_morePage;
+static NSTimeInterval sg_moreTappedAt;
+static char kRecorderKey;
+
+UIView *SGRPinnedMoreRecentPage(void) {
+    if (!sg_morePage || CACurrentMediaTime() - sg_moreTappedAt > SGRPinnedMoreWindow) return nil;
+    return sg_morePage;
+}
+
+@interface SGRPinnedMoreRecorder : NSObject
+@end
+@implementation SGRPinnedMoreRecorder
+- (void)sgr_moreTapped:(SGRMirrorButton *)button {
+    sg_morePage = button.superview;
+    sg_moreTappedAt = CACurrentMediaTime();
+}
+@end
+
+SGRMirrorButton *SGRPinnedMore(UIView *page, const void *key, UIView *source) {
+    if (!page) return nil;
+    SGRMirrorButton *button = objc_getAssociatedObject(page, key);
+    if (!button) {
+        button = [[SGRMirrorButton alloc] initWithFrame:CGRectZero];
+        button.fallbackGlyph = [UIImage systemImageNamed:@"ellipsis"];
+        // ⋯ sits in an Encore Tertiary button in Spotify's own row, which draws it grey; in the corner of
+        // the page it is the one control there and reads white, like the back button opposite it.
+        button.glyphColor = SGRPrimary();
+        // Held by the button, which is held by the page, so the recorder lives exactly as long as both.
+        SGRPinnedMoreRecorder *recorder = [SGRPinnedMoreRecorder new];
+        objc_setAssociatedObject(button, &kRecorderKey, recorder, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [button addTarget:recorder action:@selector(sgr_moreTapped:) forControlEvents:UIControlEventTouchDown];
+        objc_setAssociatedObject(page, key, button, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    // Over the page's list and its header both, and put back on top whenever Spotify adds to the page.
+    if (button.superview != page) [page addSubview:button];
+    else if (page.subviews.lastObject != button) [page bringSubviewToFront:button];
+    if (source) [button feedFrom:source];
+    if (button.hidden != (source == nil)) button.hidden = source == nil;
+
+    // Measured in the window and converted back, never from the page's own safe area: a page under a
+    // navigation bar counts the bar into its inset, so the playlist's read 116 where the window's reads 62
+    // and the button sat a bar's height below the back button (device, trees/continuous/1.txt 2026-09-20).
+    UIWindow *window = page.window;
+    CGFloat side = SGRGlassCircleSize;
+    CGRect frame;
+    if (window) {
+        CGRect inWindow = CGRectMake(window.bounds.size.width - kCornerSide - side, window.safeAreaInsets.top, side, side);
+        frame = [page convertRect:inWindow fromView:nil];
+    } else {
+        frame = CGRectMake(page.bounds.size.width - kCornerSide - side, page.safeAreaInsets.top, side, side);
+    }
+    if (!CGRectIsEmpty(frame) && !CGRectEqualToRect(button.frame, frame)) button.frame = frame;
+    return button;
+}

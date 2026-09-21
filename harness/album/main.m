@@ -135,6 +135,24 @@ static UIView *actionButton(UIView *row, CGRect frame, NSString *identifier, NSS
 
 @end
 
+// What the redesign's row shows on Play's right: the label of the Kit's last round button, the trailing one.
+static NSString *trailingLabel(UIView *root) {
+    NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:root];
+    while (stack.count) {
+        UIView *v = stack.lastObject;
+        [stack removeLastObject];
+        if ([NSStringFromClass(v.class) isEqualToString:@"SGRHeaderInfo"]) {
+            UIView *trailing = nil;
+            for (UIView *sub in v.subviews) {
+                if ([NSStringFromClass(sub.class) isEqualToString:@"SGRMirrorButton"]) trailing = sub;
+            }
+            return trailing && !trailing.hidden ? trailing.accessibilityLabel : @"nothing";
+        }
+        [stack addObjectsFromArray:v.subviews];
+    }
+    return @"no header";
+}
+
 #pragma mark - the page
 
 @interface SGRHarnessDelegate : UIResponder <UIApplicationDelegate>
@@ -235,7 +253,10 @@ static UIView *actionButton(UIView *row, CGRect frame, NSString *identifier, NSS
                          @[@"Components.UI.AddToButton", @"plus", @"Add", @62, @0, @48, @48],
                          @[@"DownloadButton.Granular.None", @"arrow.down.circle", @"Download", @110, @0, @48, @48],
                          @[@"Components.UI.ContextMenuButton-3OxfaVgvTxUTy7276t7SPU", @"ellipsis", @"More options", @158, @0, @48, @48]];
+    // `late` on the launch line: add is not in the row yet, the way an album opened for the first time has it.
+    BOOL late = [NSProcessInfo.processInfo.arguments containsObject:@"late"];
     for (NSArray *action in actions) {
+        if (late && [action[0] isEqualToString:@"Components.UI.AddToButton"]) continue;
         CGRect frame = CGRectMake([action[3] doubleValue], [action[4] doubleValue], [action[5] doubleValue], [action[6] doubleValue]);
         [_actionItems addObject:actionButton(_actionRow, frame, action[0], action[1], action[2])];
         [_actionFrames addObject:[NSValue valueWithCGRect:frame]];
@@ -307,6 +328,38 @@ static UIView *actionButton(UIView *row, CGRect frame, NSString *identifier, NSS
         [_footerCells addObject:cell];
     }
 
+    // An episode page is this same template with cells of its own (device, trees/continuous/1.txt
+    // 2026-09-20), and every one of them paints the black the AMOLED made of Spotify's base surface over
+    // the field. Put under the tracks, clear of the footer the redesign drops: what is proved here is the
+    // paint, not the layout. A card inside one of them is a cell of its own and keeps its own black.
+    NSArray *episode = @[@[@"Episode Transcript", @50], @[@"", @24], @[@"", @4.67]];
+    CGFloat episodeY = _tracksBottom + 140;
+    NSMutableArray<UIView *> *episodePaints = [NSMutableArray array];
+    for (NSArray *item in episode) {
+        CGFloat height = [item[1] doubleValue];
+        UICollectionViewCell *cell = [[_TtC12Element_List18CollectionViewCell alloc]
+                                      initWithFrame:CGRectMake(0, episodeY, W, height)];
+        [collection addSubview:cell];
+        UIView *content = box(cell.contentView, UIView.class, cell.contentView.bounds, nil);
+        UIView *paint = box(content, UIView.class, content.bounds, nil);
+        paint.backgroundColor = UIColor.blackColor;
+        if ([item[0] length]) label(paint, CGRectMake(16, 16, W - 48, 18), item[0], 13, UIColor.whiteColor, @"Encore.Label");
+        [episodePaints addObject:paint];
+        episodeY += height;
+    }
+    UICollectionViewCell *carousel = [[_TtC12Element_List18CollectionViewCell alloc]
+                                      initWithFrame:CGRectMake(0, episodeY, W, 80)];
+    [collection addSubview:carousel];
+    UICollectionViewCell *card = [[_TtC12Element_List18CollectionViewCell alloc] initWithFrame:CGRectMake(16, 0, 153, 80)];
+    card.backgroundColor = UIColor.blackColor;
+    [carousel.contentView addSubview:card];
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSLog(@"[harness] the episode page's paint: %@ %@ %@, and the card inside a cell %@",
+              episodePaints[0].backgroundColor ?: @"clear", episodePaints[1].backgroundColor ?: @"clear",
+              episodePaints[2].backgroundColor ?: @"clear", card.backgroundColor ?: @"clear");
+    });
+
     // the sticky navigation bar, its gradient hidden until the page scrolls
     UIView *navBar = box(page, _TtC28EncoreConsumerMobile_BaseKit20HeaderNavigationBar.class, CGRectMake(0, 0, W, 118), @"CreativeWorkPlatform.HeaderNavigationBar");
     UIView *navGradient = box(navBar, _TtC19LegacyUI_ECMCoreKit12GradientView.class, navBar.bounds, nil);
@@ -341,6 +394,20 @@ static UIView *actionButton(UIView *row, CGRect frame, NSString *identifier, NSS
 
     [self.window makeKeyAndVisible];
 
+    // In `late`, add arrives at 2.5 s, after every pass of the header's and the metadata's re-reads: an arranged
+    // subview of the row, which lays out the row and nothing above it.
+    if (late) {
+        UIStackView *row = (UIStackView *)_actionRow;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [row insertArrangedSubview:actionButton(row, CGRectMake(62, 0, 48, 48), @"Components.UI.AddToButton", @"plus", @"Add")
+                               atIndex:0];
+            NSLog(@"[harness] late: add arrived in the row");
+        });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            NSLog(@"[harness] late: Play's right shows \"%@\"", trailingLabel(root.view));
+        });
+    }
+
     // The list is measured the way the page's collection measures it: every cell is asked how tall it wants
     // to be, which is where AlbumSections.x answers 0 for what the redesign drops, and the answers are
     // stacked. Done a beat after launch, so the header has laid out at least once first.
@@ -349,6 +416,28 @@ static UIView *actionButton(UIView *row, CGRect frame, NSString *identifier, NSS
         NSLog(@"[harness] hero %@, title stack %@, action row %@",
               NSStringFromCGRect([cover.window convertRect:cover.bounds fromView:cover]),
               NSStringFromCGRect(self->_titleStack.frame), NSStringFromCGRect(self->_actionRow.frame));
+
+        // The ⋯ the redesign pins over the page, outside the scroll, and the artist line under the title,
+        // which opens whoever made the album (issues #57 and #56).
+        UIView *pinned = nil;
+        for (UIView *sub in page.subviews) {
+            if ([NSStringFromClass(sub.class) isEqualToString:@"SGRMirrorButton"]) pinned = sub;
+        }
+        NSLog(@"[harness] pinned more: %@ on the page, hidden=%d",
+              pinned ? NSStringFromCGRect(pinned.frame) : @"MISSING", pinned.hidden);
+        __block UIView *info = nil, *artist = nil;
+        void (^__block walk)(UIView *) = ^(UIView *v) {
+            if ([NSStringFromClass(v.class) isEqualToString:@"SGRHeaderInfo"]) info = v;
+            for (UIView *sub in v.subviews) walk(sub);
+        };
+        walk(root.view);
+        for (UIView *sub in info.subviews) {
+            if ([sub isKindOfClass:UILabel.class] && [((UILabel *)sub).text isEqualToString:@"The Weeknd"]) artist = sub;
+        }
+        UIView *onName = [info hitTest:CGPointMake(CGRectGetMidX(info.bounds), CGRectGetMidY(artist.frame)) withEvent:nil];
+        UIView *beside = [info hitTest:CGPointMake(24, CGRectGetMidY(artist.frame)) withEvent:nil];
+        NSLog(@"[harness] artist line: on the name %@, beside it %@", onName ? NSStringFromClass(onName.class) : @"through",
+              beside ? NSStringFromClass(beside.class) : @"through");
     });
 
     // Spotify lays the header out again after the redesign has moved things: the title block, its stack and

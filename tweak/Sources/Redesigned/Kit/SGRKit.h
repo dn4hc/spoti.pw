@@ -8,7 +8,9 @@
 //     SGRGlass.h     glass inside Spotify's round controls
 //     SGRGlyph.h     bare glyph overlays and glyph buttons
 //     SGRActionRow.h the Play capsule and the stand-in button of a page's action row
-//     SGRRestyle.h   keeping Spotify's views restyled: suppress, digits, lookups, shadows, firing controls
+//     SGRHeaderInfo.h a page header's title, creator, length, row and description, the Music app's
+//     SGRRestyle.h   keeping Spotify's views restyled: suppress, digits, lookups, shadows, firing
+//                    controls, taking a list cell's paint off the field
 //     SGRBridges.h   player state, now playing artwork, the player's open and close
 //     SGRRepaint.h   the areas the redesign keeps transparent when Spotify repaints them
 //     SGRAccent.h    the redesign's accent colour; its AMOLED black is SGRAmoled.x, always on
@@ -22,6 +24,7 @@
 #import "SGRGlass.h"
 #import "SGRGlyph.h"
 #import "SGRActionRow.h"
+#import "SGRHeaderInfo.h"
 #import "SGRRestyle.h"
 #import "SGRBridges.h"
 #import "SGRRepaint.h"

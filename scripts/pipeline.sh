@@ -56,10 +56,15 @@ fi
 
 APP_DIR="$(unzip -Z1 "$IN" | grep -oE '^Payload/[^/]+\.app/' | sort -u | head -1)"
 [ -n "$APP_DIR" ] || { echo "no Payload/*.app in $IN" >&2; exit 1; }
-VERSION="$(unzip -p "$IN" "${APP_DIR}Info.plist" > "$ROOT/out/.info.plist" && plutil -extract CFBundleShortVersionString raw -o - "$ROOT/out/.info.plist")"
+SPOTIFY_VERSION="$(unzip -p "$IN" "${APP_DIR}Info.plist" > "$ROOT/out/.info.plist" && plutil -extract CFBundleShortVersionString raw -o - "$ROOT/out/.info.plist")"
 rm -f "$ROOT/out/.info.plist"
-OUT="${OUT:-$ROOT/out/Spotify-$VERSION-glass.ipa}"
-echo "==> Spotify $VERSION -> $OUT"
+# The name carries the mod's version, not Spotify's: it is the one the About page shows and the one
+# worth telling builds apart by. version.txt is read the way tweak/Makefile reads it, so a build from
+# a fork left behind by a release is named for the version it really is.
+MOD_VERSION="$(cat "$ROOT/version.txt" 2>/dev/null || true)"
+: "${MOD_VERSION:=0.0.0}"
+OUT="${OUT:-$ROOT/out/spoti.pw-$MOD_VERSION.ipa}"
+echo "==> spoti.pw $MOD_VERSION on Spotify $SPOTIFY_VERSION -> $OUT"
 
 # The flag table is generated rather than committed, so it always matches the IPA being built.
 if [ ! -f "$ROOT/tweak/Sources/Shared/Flags/SGFlagList.m" ]; then
@@ -83,7 +88,7 @@ echo "    $TWEAK_DEB"
 FILES=("$TWEAK_DEB")
 [ "$WITH_FLEX" = 1 ] && FILES+=("$FLEX_DEB")
 
-# The redesign's Live Activity (Redesigned/LiveActivity) draws in a widget extension of its own.
+# The Live Activity (Shared/LiveActivity) draws in a widget extension of its own.
 if xcrun --sdk iphoneos --find swiftc >/dev/null 2>&1; then
   EXT_DIR="$ROOT/out/extension"
   unzip -p "$IN" "${APP_DIR}Info.plist" > "$ROOT/out/.info.plist"
@@ -94,9 +99,33 @@ else
   echo "==> no Xcode selected: building without the Live Activity extension"
 fi
 
+# Spotify's widget reads what the app writes through App Group suites the re-signed IPA is not entitled
+# to; this dylib, loaded by the app and by the widget, puts both on a group the signature does have.
+echo "==> building the App Group shim"
+GROUPS_DYLIB="$ROOT/out/SpotifyGlassAppGroups.dylib"
+xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -dynamiclib -fobjc-arc -Os -framework Foundation -framework Security \
+  -install_name @rpath/SpotifyGlassAppGroups.dylib -o "$GROUPS_DYLIB" "$ROOT/extension/AppGroups/AppGroups.m"
+FILES+=("$GROUPS_DYLIB")
+
 echo "==> injecting"
 # -w drops the Watch app: its companion-app key would still name com.spotify.client and block the install.
 cyan -i "$IN" -o "$OUT" -f "${FILES[@]}" -l "$ROOT/plist/liquid-glass.plist" ${BUNDLE_ID:+-b "$BUNDLE_ID"} ${NAME:+-n "$NAME"} ${ICON:+-k "$ICON"} -w -s --overwrite
+
+echo "==> loading the App Group shim in the home screen widget"
+WIDGET_BIN="${APP_DIR}PlugIns/WidgetExtension.appex/WidgetExtension"
+if unzip -l "$OUT" "$WIDGET_BIN" >/dev/null 2>&1; then
+  PATCH="$(mktemp -d)"
+  unzip -q "$OUT" "$WIDGET_BIN" -d "$PATCH"
+  "$ROOT/scripts/insert-dylib.py" "$PATCH/$WIDGET_BIN" @rpath/SpotifyGlassAppGroups.dylib
+  # Fakesigned again with its own entitlements, the way cyan -s left it, for TrollStore.
+  ldid -e "$PATCH/$WIDGET_BIN" > "$PATCH/ents.plist"
+  ldid -S"$PATCH/ents.plist" "$PATCH/$WIDGET_BIN"
+  OUT_ABS="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
+  (cd "$PATCH" && zip -q "$OUT_ABS" "$WIDGET_BIN")
+  rm -rf "$PATCH"
+else
+  echo "    no WidgetExtension.appex in this IPA"
+fi
 
 if [ -n "${EXT_DIR:-}" ]; then
   echo "==> adding the Live Activity intents to Spotify's App Intents metadata"

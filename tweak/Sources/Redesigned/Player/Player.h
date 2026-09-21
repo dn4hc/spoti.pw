@@ -14,6 +14,10 @@
 //     PlayerScroll.x     the list pinned to the top, so the player is one screen and cannot be scrolled
 //     PlayerLyrics.x     the lyrics in the player: the cover as a thumbnail, the title up beside it
 //     PlayerGestures.x   the gestures' hookup
+//     PlayerMorph.x      the open and close grown out of the now playing bar's card, the cover flown
+//
+// Speed and pitch, once the redesign's own, are Shared/Player/SpeedPitch.h's; PlayerHeader.x still hands
+// the more button over, so a menu opened from it is taken for the player's.
 //
 // Every hook installs only while Redesigned UI is on (SGRedesignedUI); the native look's do not then.
 // Threading: main thread only.
@@ -34,6 +38,9 @@ CGRect SGRPlayerCoverFrameIn(UIView *host);
 // The band that cover sits in -- the room the player gives its artwork, between the header row and the
 // title -- in `host`'s coordinates; CGRectNull when no cover has laid out.
 CGRect SGRPlayerArtworkAreaIn(UIView *host);
+// Hides the cover on screen and its shadow, or shows them again, for a stand-in to fly in its place
+// (PlayerMorph.x).
+void SGRPlayerSetCoverHidden(BOOL hidden);
 
 #pragma mark - the lyrics in the player (PlayerLyrics.x)
 
